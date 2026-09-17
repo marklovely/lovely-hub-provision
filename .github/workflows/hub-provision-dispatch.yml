@@ -1,10 +1,8 @@
 # Copy to public repo: .github/workflows/hub-provision-dispatch.yml
-# Repository: marklovely/lovely-hub-provision
+# Repository: marklovely/lovely-hub-provision (suggested public name)
 #
-# Runs provision and billing-deprovision on GitHub-hosted ubuntu-latest by
-# checking out the private monorepo and reusing composite actions from that checkout.
-# Copy the full private-repo secret set listed in docs/hub-provision-public-actions.md
-# onto this public repo (values stay out of git).
+# Runs provision/teardown on GitHub-hosted ubuntu-latest (checks out private home-dashboard).
+# Sync secrets: scripts/sync-hub-tfvars-to-github-secrets.mjs --repo marklovely/lovely-hub-provision --profile provision
 
 name: Hub provision dispatch
 
@@ -34,8 +32,7 @@ on:
         default: true
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: hub-provision-dispatch-${{ inputs.job_action }}-${{ inputs.site_id }}
@@ -43,45 +40,18 @@ concurrency:
 
 jobs:
   resolve-stack:
+    if: inputs.job_action == 'provision' || inputs.job_action == 'teardown'
     runs-on: ubuntu-latest
     outputs:
       terraform_stack: ${{ steps.resolve.outputs.terraform_stack }}
-      checkout_ref: ${{ steps.ref.outputs.ref }}
     steps:
-      - name: Resolve private repo ref
-        id: ref
-        shell: bash
-        env:
-          RAW_REF: ${{ secrets.HOME_DASHBOARD_REF }}
-        run: |
-          REF="$(printf '%s' "${RAW_REF:-}" | tr -d '[:space:]')"
-          echo "ref=${REF:-main}" >> "$GITHUB_OUTPUT"
-
-      - name: Validate HOME_DASHBOARD_REPO
-        shell: bash
-        env:
-          REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
-          TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
-        run: |
-          set -euo pipefail
-          REPO="$(printf '%s' "${REPO:-}" | tr -d '[:space:]')"
-          if [ -z "${TOKEN:-}" ] || [ -z "${REPO:-}" ]; then
-            echo "HOME_DASHBOARD_DISPATCH_TOKEN and HOME_DASHBOARD_REPO must be set."
-            exit 1
-          fi
-          case "$REPO" in
-            */*) ;;
-            *)
-              echo "HOME_DASHBOARD_REPO must be owner/name (e.g. marklovely/home-dashboard)."
-              exit 1
-              ;;
-          esac
-
-      - uses: actions/checkout@v5
+      - name: Checkout home-dashboard
+        uses: actions/checkout@v5
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
-          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
-          ref: ${{ steps.ref.outputs.ref }}
+          ref: ${{ secrets.HOME_DASHBOARD_REF != '' && secrets.HOME_DASHBOARD_REF || 'main' }}
+          token: ${{ secrets.HOME_DASHBOARD_CHECKOUT_TOKEN }}
+          persist-credentials: false
 
       - uses: ./.github/actions/setup-node
 
@@ -92,10 +62,13 @@ jobs:
           STACK=$(node scripts/terraform-stack-for-site.mjs "$SITE_ID" --guess)
           echo "terraform_stack=$STACK" >> "$GITHUB_OUTPUT"
 
-  hub-provision:
+  provision:
     if: inputs.job_action == 'provision'
     needs: resolve-stack
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     concurrency:
       group: ${{ needs.resolve-stack.outputs.terraform_stack == 'customers' && format('platform-terraform-state-customers-{0}', inputs.site_id) || format('platform-terraform-state-{0}', needs.resolve-stack.outputs.terraform_stack) }}
       cancel-in-progress: false
@@ -118,10 +91,12 @@ jobs:
       STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
       STRIPE_PRICE_ID: ${{ secrets.STRIPE_PRICE_ID }}
       STRIPE_PRICE_ID_YEARLY: ${{ secrets.STRIPE_PRICE_ID_YEARLY }}
+      STRIPE_PRICE_ID_FREE: ${{ secrets.STRIPE_PRICE_ID_FREE }}
       STRIPE_SECRET_KEY_LIVE: ${{ secrets.STRIPE_SECRET_KEY_LIVE }}
       STRIPE_WEBHOOK_SECRET_LIVE: ${{ secrets.STRIPE_WEBHOOK_SECRET_LIVE }}
       STRIPE_PRICE_ID_LIVE: ${{ secrets.STRIPE_PRICE_ID_LIVE }}
       STRIPE_PRICE_ID_YEARLY_LIVE: ${{ secrets.STRIPE_PRICE_ID_YEARLY_LIVE }}
+      STRIPE_PRICE_ID_FREE_LIVE: ${{ secrets.STRIPE_PRICE_ID_FREE_LIVE }}
       STRIPE_REFERRAL_COUPON_MONTHLY: ${{ secrets.STRIPE_REFERRAL_COUPON_MONTHLY }}
       STRIPE_REFERRAL_COUPON_YEARLY: ${{ secrets.STRIPE_REFERRAL_COUPON_YEARLY }}
       STRIPE_REFERRAL_COUPON_MONTHLY_LIVE: ${{ secrets.STRIPE_REFERRAL_COUPON_MONTHLY_LIVE }}
@@ -147,24 +122,123 @@ jobs:
       TF_STATE_R2_ENDPOINT: ${{ secrets.TF_STATE_R2_ENDPOINT }}
       TERRAFORM_STACK: ${{ needs.resolve-stack.outputs.terraform_stack }}
       TF_VAR_terraform_stack: ${{ needs.resolve-stack.outputs.terraform_stack }}
+      GITHUB_REPOSITORY: ${{ secrets.HOME_DASHBOARD_REPO }}
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout home-dashboard
+        uses: actions/checkout@v5
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
-          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
-          ref: ${{ needs.resolve-stack.outputs.checkout_ref }}
+          ref: ${{ secrets.HOME_DASHBOARD_REF != '' && secrets.HOME_DASHBOARD_REF || 'main' }}
+          token: ${{ secrets.HOME_DASHBOARD_CHECKOUT_TOKEN }}
+          persist-credentials: false
 
-      - uses: ./.github/actions/hub-manual-provision
+      - name: Ensure customer site registry exists locally
+        env:
+          SITE_ID: ${{ inputs.site_id }}
+        run: node scripts/ensure-customer-site-yaml.mjs "$SITE_ID"
+
+      - name: Validate site_id
+        env:
+          SITE_ID: ${{ inputs.site_id }}
+        run: node scripts/validate-deploy-site-id.mjs
+
+      - uses: ./.github/actions/setup-node
         with:
-          site_id: ${{ inputs.site_id }}
-          terraform_stack: ${{ needs.resolve-stack.outputs.terraform_stack }}
-          skip_pages: ${{ inputs.skip_pages }}
-          skip_platform_admin: ${{ inputs.skip_platform_admin }}
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
 
-  hub-teardown:
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+          terraform_wrapper: false
+
+      - name: Require remote Terraform state
+        run: |
+          if [ -z "${{ secrets.TF_STATE_R2_BUCKET }}" ] || [ -z "${{ secrets.TF_STATE_R2_ENDPOINT }}" ]; then
+            echo "::error::Configure TF_STATE_R2_BUCKET and TF_STATE_R2_ENDPOINT repo secrets. See docs/platform-provision.md"
+            exit 1
+          fi
+          if [ "${{ needs.resolve-stack.outputs.terraform_stack }}" != "platform" ] && [ "${{ needs.resolve-stack.outputs.terraform_stack }}" != "customers" ]; then
+            echo "::error::terraform_stack must be platform or customers."
+            exit 1
+          fi
+
+      - name: Terraform init (R2 backend)
+        run: bash scripts/terraform-init-r2.sh "${{ needs.resolve-stack.outputs.terraform_stack }}" "${{ inputs.site_id }}"
+
+      - name: Assert Terraform state was split
+        run: node scripts/assert-terraform-stack-state.mjs "${{ needs.resolve-stack.outputs.terraform_stack }}" "${{ inputs.site_id }}"
+
+      - name: Install worker dependencies
+        run: npm ci --prefix worker
+
+      - name: Verify Cloudflare API token
+        run: bash scripts/verify-cloudflare-api-token.sh
+
+      - name: Resolve site owner emails from billing
+        run: node scripts/fetch-site-owner-emails.mjs "${{ inputs.site_id }}" --github-env
+
+      - name: Clear previous setup failure
+        continue-on-error: true
+        run: node scripts/mark-hub-setup-failed.mjs "${{ inputs.site_id }}" --kind provision --clear
+
+      - name: Provision hub site
+        run: |
+          ARGS=( "${{ inputs.site_id }}" )
+          if [ "${{ inputs.skip_pages }}" = "true" ]; then ARGS+=( --skip-pages ); fi
+          if [ "${{ inputs.skip_platform_admin }}" = "true" ]; then ARGS+=( --skip-platform-admin ); fi
+          node scripts/provision-hub-site.mjs "${ARGS[@]}"
+
+      - name: Restore hub from platform archive
+        env:
+          SITE_ID: ${{ inputs.site_id }}
+        run: node scripts/restore-hub-site-from-archive.mjs "$SITE_ID"
+
+      - name: Snapshot provisioned registry files
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ secrets.PLATFORM_GITHUB_TOKEN }}
+          PLATFORM_GITHUB_TOKEN: ${{ secrets.PLATFORM_GITHUB_TOKEN }}
+          SITE_ID: ${{ inputs.site_id }}
+        run: |
+          if [ -z "$PLATFORM_GITHUB_TOKEN" ]; then
+            echo "::warning::PLATFORM_GITHUB_TOKEN not set — skipping registry snapshot."
+            exit 0
+          fi
+          node scripts/push-hub-registry-snapshot.mjs record "$SITE_ID"
+
+      - name: Enqueue registry record
+        if: steps.snapshot.outputs.source_ref != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SITE_ID: ${{ inputs.site_id }}
+          SOURCE_REF: ${{ steps.snapshot.outputs.source_ref }}
+        run: >
+          node scripts/enqueue-hub-job.mjs
+          --queue registry
+          --action record
+          --site-id "$SITE_ID"
+          --ref "$SOURCE_REF"
+
+      - name: Record setup failure for the signup page
+        if: failure()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: >
+          node scripts/mark-hub-setup-failed.mjs "${{ inputs.site_id }}"
+          --kind provision
+          --message "Hub provision workflow failed (run ${{ github.run_id }})."
+
+  teardown:
     if: inputs.job_action == 'teardown'
     needs: resolve-stack
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     concurrency:
       group: ${{ needs.resolve-stack.outputs.terraform_stack == 'customers' && format('platform-terraform-state-customers-{0}', inputs.site_id) || format('platform-terraform-state-{0}', needs.resolve-stack.outputs.terraform_stack) }}
       cancel-in-progress: false
@@ -208,15 +282,133 @@ jobs:
       TF_STATE_R2_ENDPOINT: ${{ secrets.TF_STATE_R2_ENDPOINT }}
       TERRAFORM_STACK: ${{ needs.resolve-stack.outputs.terraform_stack }}
       TF_VAR_terraform_stack: ${{ needs.resolve-stack.outputs.terraform_stack }}
+      GITHUB_REPOSITORY: ${{ secrets.HOME_DASHBOARD_REPO }}
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout home-dashboard
+        uses: actions/checkout@v5
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
-          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
-          ref: ${{ needs.resolve-stack.outputs.checkout_ref }}
+          ref: ${{ secrets.HOME_DASHBOARD_REF != '' && secrets.HOME_DASHBOARD_REF || 'main' }}
+          token: ${{ secrets.HOME_DASHBOARD_CHECKOUT_TOKEN }}
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: ./.github/actions/billing-deprovision-hub
+      - name: Validate site_id
+        id: validate
+        env:
+          SITE_ID: ${{ inputs.site_id }}
+        run: node scripts/validate-billing-deprovision-site-id.mjs
+
+      - uses: ./.github/actions/setup-node
         with:
-          site_id: ${{ inputs.site_id }}
-          terraform_stack: ${{ needs.resolve-stack.outputs.terraform_stack }}
+          cache-dependency-path: package-lock.json
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+          terraform_wrapper: false
+
+      - name: Require remote Terraform state
+        run: |
+          if [ -z "${{ secrets.TF_STATE_R2_BUCKET }}" ] || [ -z "${{ secrets.TF_STATE_R2_ENDPOINT }}" ]; then
+            echo "::error::Configure TF_STATE_R2_BUCKET and TF_STATE_R2_ENDPOINT repo secrets. See docs/platform-provision.md"
+            exit 1
+          fi
+
+      - name: Terraform init (R2 backend)
+        run: bash scripts/terraform-init-r2.sh "${{ needs.resolve-stack.outputs.terraform_stack }}" "${{ inputs.site_id }}"
+
+      - name: Assert Terraform state was split
+        run: node scripts/assert-terraform-stack-state.mjs "${{ needs.resolve-stack.outputs.terraform_stack }}" "${{ inputs.site_id }}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Archive hub backup before teardown
+        id: archive
+        env:
+          SITE_ID: ${{ inputs.site_id }}
+        run: |
+          set -euo pipefail
+          node scripts/archive-hub-site-backup.mjs "$SITE_ID" | tee /tmp/archive.log
+          if ! grep -q 'Archived to r2://' /tmp/archive.log; then
+            echo "::error::Archive finished without an R2 object key — refusing to remove the site from the registry."
+            exit 1
+          fi
+          KEY=$(grep 'Archived to r2://' /tmp/archive.log | head -1 | sed 's/.*r2:\/\/[^/]*\///')
+          echo "archive_r2_key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Refresh main before registry delete
+        id: sync_main
+        env:
+          SITE_ID: ${{ inputs.site_id }}
+        run: node scripts/sync-git-main-before-site-delete.mjs "$SITE_ID"
+
+      - name: Remove site from registry (local)
+        if: steps.sync_main.outputs.site_present != 'false'
+        env:
+          SITE_ID: ${{ inputs.site_id }}
+          HOSTNAME: ${{ steps.validate.outputs.hostname }}
+        run: |
+          node scripts/platform-site-manage.mjs delete \
+            --site-id "$SITE_ID" \
+            --confirm-hostname "$HOSTNAME"
+
+      - name: Install worker dependencies
+        run: npm ci --prefix worker
+
+      - name: Deprovision hub site
+        run: node scripts/deprovision-hub-site.mjs "${{ inputs.site_id }}"
+
+      - name: Snapshot deprovisioned registry files
+        id: snapshot
+        env:
+          GH_TOKEN: ${{ secrets.PLATFORM_GITHUB_TOKEN }}
+          PLATFORM_GITHUB_TOKEN: ${{ secrets.PLATFORM_GITHUB_TOKEN }}
+          SITE_ID: ${{ inputs.site_id }}
+        run: |
+          if [ -z "$PLATFORM_GITHUB_TOKEN" ]; then
+            echo "::error::PLATFORM_GITHUB_TOKEN is required to record the registry drop."
+            exit 1
+          fi
+          node scripts/push-hub-registry-snapshot.mjs drop "$SITE_ID"
+
+      - name: Enqueue registry drop
+        if: steps.snapshot.outputs.source_ref != ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SITE_ID: ${{ inputs.site_id }}
+          SOURCE_REF: ${{ steps.snapshot.outputs.source_ref }}
+        run: >
+          node scripts/enqueue-hub-job.mjs
+          --queue registry
+          --action drop
+          --site-id "$SITE_ID"
+          --ref "$SOURCE_REF"
+
+      - name: Record archive pointer in platform billing D1
+        if: steps.archive.outputs.archive_r2_key != ''
+        continue-on-error: true
+        env:
+          SITE_ID: ${{ inputs.site_id }}
+          ARCHIVE_R2_KEY: ${{ steps.archive.outputs.archive_r2_key }}
+        run: |
+          node scripts/update-billing-archive-key.mjs "$SITE_ID" "$ARCHIVE_R2_KEY"
+
+      - name: Prune HUB_PROXY_SECRETS_JSON (private repo)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.PLATFORM_GITHUB_TOKEN }}
+          SITE_ID: ${{ inputs.site_id }}
+        run: node scripts/prune-hub-proxy-secrets-github-secret.mjs
+
+      - name: Prune HUB_PROXY_SECRETS_JSON (public repo)
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.PLATFORM_GITHUB_TOKEN }}
+          SITE_ID: ${{ inputs.site_id }}
+          GITHUB_SECRETS_REPO: ${{ github.repository }}
+        run: node scripts/prune-hub-proxy-secrets-github-secret.mjs
