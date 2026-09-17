@@ -1,0 +1,89 @@
+# Copy to public repo: .github/workflows/hub-provision-dispatch.yml
+# Repository: marklovely/lovely-hub-provision (suggested public name)
+#
+# Thin GitHub-hosted orchestrator — forwards hub-jobs dispatches to the private monorepo.
+
+name: Hub provision dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_id:
+        description: Site id (e.g. rose-cottage)
+        required: true
+        type: string
+      job_action:
+        description: provision or teardown
+        required: true
+        type: choice
+        options:
+          - provision
+          - teardown
+      skip_pages:
+        description: Forwarded to private provision workflow
+        required: false
+        type: boolean
+        default: false
+      skip_platform_admin:
+        description: Forwarded to private provision workflow
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hub-provision-dispatch-${{ inputs.job_action }}-${{ inputs.site_id }}
+  cancel-in-progress: false
+
+jobs:
+  forward:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch private provision
+        if: inputs.job_action == 'provision'
+        env:
+          GH_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
+          REF: ${{ secrets.HOME_DASHBOARD_REF != '' && secrets.HOME_DASHBOARD_REF || 'main' }}
+          SITE_ID: ${{ inputs.site_id }}
+          SKIP_PAGES: ${{ inputs.skip_pages }}
+          SKIP_PLATFORM_ADMIN: ${{ inputs.skip_platform_admin }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ] || [ -z "${REPO:-}" ]; then
+            echo "HOME_DASHBOARD_DISPATCH_TOKEN and HOME_DASHBOARD_REPO must be set on this repo."
+            exit 1
+          fi
+          curl -fsSL -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO}/actions/workflows/platform-site-provision.yml/dispatches" \
+            -d "$(jq -n \
+              --arg ref "$REF" \
+              --arg site_id "$SITE_ID" \
+              --arg skip_pages "$SKIP_PAGES" \
+              --arg skip_platform_admin "$SKIP_PLATFORM_ADMIN" \
+              '{ref: $ref, inputs: {site_id: $site_id, skip_pages: $skip_pages, skip_platform_admin: $skip_platform_admin}}')"
+
+      - name: Dispatch private billing deprovision
+        if: inputs.job_action == 'teardown'
+        env:
+          GH_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
+          REF: ${{ secrets.HOME_DASHBOARD_REF != '' && secrets.HOME_DASHBOARD_REF || 'main' }}
+          SITE_ID: ${{ inputs.site_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ] || [ -z "${REPO:-}" ]; then
+            echo "HOME_DASHBOARD_DISPATCH_TOKEN and HOME_DASHBOARD_REPO must be set on this repo."
+            exit 1
+          fi
+          curl -fsSL -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO}/actions/workflows/platform-site-billing-deprovision.yml/dispatches" \
+            -d "$(jq -n --arg ref "$REF" --arg site_id "$SITE_ID" '{ref: $ref, inputs: {site_id: $site_id}}')"
