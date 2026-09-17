@@ -1,8 +1,3 @@
-# Copy to public repo: .github/workflows/hub-provision-dispatch.yml
-# Repository: marklovely/lovely-hub-provision (suggested public name)
-#
-# Thin GitHub-hosted orchestrator — forwards hub-jobs dispatches to the private monorepo.
-
 name: Hub provision dispatch
 
 on:
@@ -46,16 +41,28 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
-          REF: ${{ secrets.HOME_DASHBOARD_REF != '' && secrets.HOME_DASHBOARD_REF || 'main' }}
+          REF: ${{ secrets.HOME_DASHBOARD_REF }}
           SITE_ID: ${{ inputs.site_id }}
           SKIP_PAGES: ${{ inputs.skip_pages }}
           SKIP_PLATFORM_ADMIN: ${{ inputs.skip_platform_admin }}
         run: |
           set -euo pipefail
+          REPO="$(printf '%s' "${REPO:-}" | tr -d '[:space:]')"
+          REF="$(printf '%s' "${REF:-}" | tr -d '[:space:]')"
+          REF="${REF:-main}"
           if [ -z "${GH_TOKEN:-}" ] || [ -z "${REPO:-}" ]; then
             echo "HOME_DASHBOARD_DISPATCH_TOKEN and HOME_DASHBOARD_REPO must be set on this repo."
             exit 1
           fi
+          case "$REPO" in
+            */*) ;;
+            *)
+              echo "HOME_DASHBOARD_REPO must be owner/name (e.g. marklovely/home-dashboard), not a URL or branch."
+              exit 1
+              ;;
+          esac
+          SKIP_PAGES="${SKIP_PAGES:-false}"
+          SKIP_PLATFORM_ADMIN="${SKIP_PLATFORM_ADMIN:-true}"
           curl -fsSL -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${GH_TOKEN}" \
@@ -73,14 +80,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
-          REF: ${{ secrets.HOME_DASHBOARD_REF != '' && secrets.HOME_DASHBOARD_REF || 'main' }}
+          REF: ${{ secrets.HOME_DASHBOARD_REF }}
           SITE_ID: ${{ inputs.site_id }}
         run: |
           set -euo pipefail
+          REPO="$(printf '%s' "${REPO:-}" | tr -d '[:space:]')"
+          REF="$(printf '%s' "${REF:-}" | tr -d '[:space:]')"
+          REF="${REF:-main}"
           if [ -z "${GH_TOKEN:-}" ] || [ -z "${REPO:-}" ]; then
             echo "HOME_DASHBOARD_DISPATCH_TOKEN and HOME_DASHBOARD_REPO must be set on this repo."
             exit 1
           fi
+          case "$REPO" in
+            */*) ;;
+            *)
+              echo "HOME_DASHBOARD_REPO must be owner/name (e.g. marklovely/home-dashboard), not a URL or branch."
+              exit 1
+              ;;
+          esac
           curl -fsSL -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${GH_TOKEN}" \
