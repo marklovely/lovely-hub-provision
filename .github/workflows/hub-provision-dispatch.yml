@@ -15,92 +15,200 @@ on:
           - provision
           - teardown
       skip_pages:
-        description: Forwarded to private provision workflow
+        description: Skip Pages frontend deploy (provision only)
         required: false
         type: boolean
         default: false
       skip_platform_admin:
-        description: Forwarded to private provision workflow
+        description: Skip platform admin redeploy (provision only)
         required: false
         type: boolean
         default: true
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 concurrency:
   group: hub-provision-dispatch-${{ inputs.job_action }}-${{ inputs.site_id }}
   cancel-in-progress: false
 
 jobs:
-  forward:
+  resolve-stack:
     runs-on: ubuntu-latest
+    outputs:
+      terraform_stack: ${{ steps.resolve.outputs.terraform_stack }}
+      checkout_ref: ${{ steps.ref.outputs.ref }}
     steps:
-      - name: Dispatch private provision
-        if: inputs.job_action == 'provision'
+      - name: Resolve private repo ref
+        id: ref
+        shell: bash
         env:
-          GH_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
-          REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
-          REF: ${{ secrets.HOME_DASHBOARD_REF }}
-          SITE_ID: ${{ inputs.site_id }}
-          SKIP_PAGES: ${{ inputs.skip_pages }}
-          SKIP_PLATFORM_ADMIN: ${{ inputs.skip_platform_admin }}
+          RAW_REF: ${{ secrets.HOME_DASHBOARD_REF }}
         run: |
-          set -euo pipefail
-          REPO="$(printf '%s' "${REPO:-}" | tr -d '[:space:]')"
-          REF="$(printf '%s' "${REF:-}" | tr -d '[:space:]')"
-          REF="${REF:-main}"
-          if [ -z "${GH_TOKEN:-}" ] || [ -z "${REPO:-}" ]; then
-            echo "HOME_DASHBOARD_DISPATCH_TOKEN and HOME_DASHBOARD_REPO must be set on this repo."
-            exit 1
-          fi
-          case "$REPO" in
-            */*) ;;
-            *)
-              echo "HOME_DASHBOARD_REPO must be owner/name (e.g. marklovely/home-dashboard), not a URL or branch."
-              exit 1
-              ;;
-          esac
-          SKIP_PAGES="${SKIP_PAGES:-false}"
-          SKIP_PLATFORM_ADMIN="${SKIP_PLATFORM_ADMIN:-true}"
-          curl -fsSL -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPO}/actions/workflows/platform-site-provision.yml/dispatches" \
-            -d "$(jq -n \
-              --arg ref "$REF" \
-              --arg site_id "$SITE_ID" \
-              --arg skip_pages "$SKIP_PAGES" \
-              --arg skip_platform_admin "$SKIP_PLATFORM_ADMIN" \
-              '{ref: $ref, inputs: {site_id: $site_id, skip_pages: $skip_pages, skip_platform_admin: $skip_platform_admin}}')"
+          REF="$(printf '%s' "${RAW_REF:-}" | tr -d '[:space:]')"
+          echo "ref=${REF:-main}" >> "$GITHUB_OUTPUT"
 
-      - name: Dispatch private billing deprovision
-        if: inputs.job_action == 'teardown'
+      - name: Validate HOME_DASHBOARD_REPO
+        shell: bash
         env:
-          GH_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
-          REF: ${{ secrets.HOME_DASHBOARD_REF }}
-          SITE_ID: ${{ inputs.site_id }}
+          TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
         run: |
           set -euo pipefail
           REPO="$(printf '%s' "${REPO:-}" | tr -d '[:space:]')"
-          REF="$(printf '%s' "${REF:-}" | tr -d '[:space:]')"
-          REF="${REF:-main}"
-          if [ -z "${GH_TOKEN:-}" ] || [ -z "${REPO:-}" ]; then
-            echo "HOME_DASHBOARD_DISPATCH_TOKEN and HOME_DASHBOARD_REPO must be set on this repo."
+          if [ -z "${TOKEN:-}" ] || [ -z "${REPO:-}" ]; then
+            echo "HOME_DASHBOARD_DISPATCH_TOKEN and HOME_DASHBOARD_REPO must be set."
             exit 1
           fi
           case "$REPO" in
             */*) ;;
             *)
-              echo "HOME_DASHBOARD_REPO must be owner/name (e.g. marklovely/home-dashboard), not a URL or branch."
+              echo "HOME_DASHBOARD_REPO must be owner/name (e.g. marklovely/home-dashboard)."
               exit 1
               ;;
           esac
-          curl -fsSL -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPO}/actions/workflows/platform-site-billing-deprovision.yml/dispatches" \
-            -d "$(jq -n --arg ref "$REF" --arg site_id "$SITE_ID" '{ref: $ref, inputs: {site_id: $site_id}}')"
+
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ steps.ref.outputs.ref }}
+
+      - uses: ./.github/actions/setup-node
+
+      - id: resolve
+        env:
+          SITE_ID: ${{ inputs.site_id }}
+        run: |
+          STACK=$(node scripts/terraform-stack-for-site.mjs "$SITE_ID" --guess)
+          echo "terraform_stack=$STACK" >> "$GITHUB_OUTPUT"
+
+  hub-provision:
+    if: inputs.job_action == 'provision'
+    needs: resolve-stack
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ needs.resolve-stack.outputs.terraform_stack == 'customers' && format('platform-terraform-state-customers-{0}', inputs.site_id) || format('platform-terraform-state-{0}', needs.resolve-stack.outputs.terraform_stack) }}
+      cancel-in-progress: false
+    env:
+      TZ: Europe/London
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+      CUSTOMER_CLOUDFLARE_ZONE_ID: ${{ secrets.CUSTOMER_CLOUDFLARE_ZONE_ID }}
+      CUSTOMER_ZONE_NAME: ${{ secrets.CUSTOMER_ZONE_NAME }}
+      WORKERS_SUBDOMAIN: ${{ secrets.WORKERS_SUBDOMAIN }}
+      ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+      OWNER_EMAILS: ${{ secrets.OWNER_EMAILS }}
+      SUPPORT_OWNER_EMAILS: ${{ secrets.SUPPORT_OWNER_EMAILS }}
+      PLATFORM_OPERATOR_EMAILS: ${{ secrets.PLATFORM_OPERATOR_EMAILS }}
+      SITTER_EMAILS: ${{ secrets.SITTER_EMAILS }}
+      PLATFORM_GITHUB_TOKEN: ${{ secrets.PLATFORM_GITHUB_TOKEN }}
+      PLATFORM_CF_API_TOKEN: ${{ secrets.PLATFORM_CF_API_TOKEN }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+      STRIPE_PRICE_ID: ${{ secrets.STRIPE_PRICE_ID }}
+      STRIPE_PRICE_ID_YEARLY: ${{ secrets.STRIPE_PRICE_ID_YEARLY }}
+      STRIPE_SECRET_KEY_LIVE: ${{ secrets.STRIPE_SECRET_KEY_LIVE }}
+      STRIPE_WEBHOOK_SECRET_LIVE: ${{ secrets.STRIPE_WEBHOOK_SECRET_LIVE }}
+      STRIPE_PRICE_ID_LIVE: ${{ secrets.STRIPE_PRICE_ID_LIVE }}
+      STRIPE_PRICE_ID_YEARLY_LIVE: ${{ secrets.STRIPE_PRICE_ID_YEARLY_LIVE }}
+      STRIPE_REFERRAL_COUPON_MONTHLY: ${{ secrets.STRIPE_REFERRAL_COUPON_MONTHLY }}
+      STRIPE_REFERRAL_COUPON_YEARLY: ${{ secrets.STRIPE_REFERRAL_COUPON_YEARLY }}
+      STRIPE_REFERRAL_COUPON_MONTHLY_LIVE: ${{ secrets.STRIPE_REFERRAL_COUPON_MONTHLY_LIVE }}
+      STRIPE_REFERRAL_COUPON_YEARLY_LIVE: ${{ secrets.STRIPE_REFERRAL_COUPON_YEARLY_LIVE }}
+      STRIPE_INTRO_COUPON_MONTHLY: ${{ secrets.STRIPE_INTRO_COUPON_MONTHLY }}
+      STRIPE_INTRO_COUPON_YEARLY: ${{ secrets.STRIPE_INTRO_COUPON_YEARLY }}
+      STRIPE_INTRO_COUPON_MONTHLY_LIVE: ${{ secrets.STRIPE_INTRO_COUPON_MONTHLY_LIVE }}
+      STRIPE_INTRO_COUPON_YEARLY_LIVE: ${{ secrets.STRIPE_INTRO_COUPON_YEARLY_LIVE }}
+      TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
+      TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CUSTOMER_EMAIL_FROM: ${{ secrets.CUSTOMER_EMAIL_FROM }}
+      HUB_PROXY_SECRETS_JSON: ${{ secrets.HUB_PROXY_SECRETS_JSON }}
+      PLATFORM_SITE_ARCHIVE_SECRET: ${{ secrets.PLATFORM_SITE_ARCHIVE_SECRET }}
+      PLATFORM_HEALTH_CF_ACCESS_CLIENT_ID: ${{ secrets.PLATFORM_HEALTH_CF_ACCESS_CLIENT_ID }}
+      PLATFORM_HEALTH_CF_ACCESS_CLIENT_SECRET: ${{ secrets.PLATFORM_HEALTH_CF_ACCESS_CLIENT_SECRET }}
+      PLATFORM_ARCHIVE_R2_BUCKET: lovely-home-hub-archives
+      GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+      OS_PLACES_API_KEY: ${{ secrets.OS_PLACES_API_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_R2_SECRET_ACCESS_KEY }}
+      TF_STATE_R2_BUCKET: ${{ secrets.TF_STATE_R2_BUCKET }}
+      TF_STATE_R2_ENDPOINT: ${{ secrets.TF_STATE_R2_ENDPOINT }}
+      TERRAFORM_STACK: ${{ needs.resolve-stack.outputs.terraform_stack }}
+      TF_VAR_terraform_stack: ${{ needs.resolve-stack.outputs.terraform_stack }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ needs.resolve-stack.outputs.checkout_ref }}
+
+      - uses: ./.github/actions/hub-manual-provision
+        with:
+          site_id: ${{ inputs.site_id }}
+          terraform_stack: ${{ needs.resolve-stack.outputs.terraform_stack }}
+          skip_pages: ${{ inputs.skip_pages }}
+          skip_platform_admin: ${{ inputs.skip_platform_admin }}
+
+  hub-teardown:
+    if: inputs.job_action == 'teardown'
+    needs: resolve-stack
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ needs.resolve-stack.outputs.terraform_stack == 'customers' && format('platform-terraform-state-customers-{0}', inputs.site_id) || format('platform-terraform-state-{0}', needs.resolve-stack.outputs.terraform_stack) }}
+      cancel-in-progress: false
+    env:
+      TZ: Europe/London
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+      CUSTOMER_CLOUDFLARE_ZONE_ID: ${{ secrets.CUSTOMER_CLOUDFLARE_ZONE_ID }}
+      CUSTOMER_ZONE_NAME: ${{ secrets.CUSTOMER_ZONE_NAME }}
+      WORKERS_SUBDOMAIN: ${{ secrets.WORKERS_SUBDOMAIN }}
+      ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+      OWNER_EMAILS: ${{ secrets.OWNER_EMAILS }}
+      SUPPORT_OWNER_EMAILS: ${{ secrets.SUPPORT_OWNER_EMAILS }}
+      PLATFORM_OPERATOR_EMAILS: ${{ secrets.PLATFORM_OPERATOR_EMAILS }}
+      SITTER_EMAILS: ${{ secrets.SITTER_EMAILS }}
+      HUB_PROXY_SECRETS_JSON: ${{ secrets.HUB_PROXY_SECRETS_JSON }}
+      PLATFORM_GITHUB_TOKEN: ${{ secrets.PLATFORM_GITHUB_TOKEN }}
+      PLATFORM_CF_API_TOKEN: ${{ secrets.PLATFORM_CF_API_TOKEN }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+      STRIPE_PRICE_ID: ${{ secrets.STRIPE_PRICE_ID }}
+      STRIPE_PRICE_ID_YEARLY: ${{ secrets.STRIPE_PRICE_ID_YEARLY }}
+      STRIPE_SECRET_KEY_LIVE: ${{ secrets.STRIPE_SECRET_KEY_LIVE }}
+      STRIPE_WEBHOOK_SECRET_LIVE: ${{ secrets.STRIPE_WEBHOOK_SECRET_LIVE }}
+      STRIPE_PRICE_ID_LIVE: ${{ secrets.STRIPE_PRICE_ID_LIVE }}
+      STRIPE_PRICE_ID_YEARLY_LIVE: ${{ secrets.STRIPE_PRICE_ID_YEARLY_LIVE }}
+      TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
+      TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CUSTOMER_EMAIL_FROM: ${{ secrets.CUSTOMER_EMAIL_FROM }}
+      PLATFORM_SITE_ARCHIVE_SECRET: ${{ secrets.PLATFORM_SITE_ARCHIVE_SECRET }}
+      PLATFORM_HEALTH_CF_ACCESS_CLIENT_ID: ${{ secrets.PLATFORM_HEALTH_CF_ACCESS_CLIENT_ID }}
+      PLATFORM_HEALTH_CF_ACCESS_CLIENT_SECRET: ${{ secrets.PLATFORM_HEALTH_CF_ACCESS_CLIENT_SECRET }}
+      PLATFORM_ARCHIVE_R2_BUCKET: ${{ secrets.PLATFORM_ARCHIVE_R2_BUCKET }}
+      GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+      OS_PLACES_API_KEY: ${{ secrets.OS_PLACES_API_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_R2_SECRET_ACCESS_KEY }}
+      TF_STATE_R2_BUCKET: ${{ secrets.TF_STATE_R2_BUCKET }}
+      TF_STATE_R2_ENDPOINT: ${{ secrets.TF_STATE_R2_ENDPOINT }}
+      TERRAFORM_STACK: ${{ needs.resolve-stack.outputs.terraform_stack }}
+      TF_VAR_terraform_stack: ${{ needs.resolve-stack.outputs.terraform_stack }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ needs.resolve-stack.outputs.checkout_ref }}
+          fetch-depth: 0
+
+      - uses: ./.github/actions/billing-deprovision-hub
+        with:
+          site_id: ${{ inputs.site_id }}
+          terraform_stack: ${{ needs.resolve-stack.outputs.terraform_stack }}
