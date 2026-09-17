@@ -1,3 +1,11 @@
+# Copy to public repo: .github/workflows/hub-provision-dispatch.yml
+# Repository: marklovely/lovely-hub-provision
+#
+# Runs provision and billing-deprovision on GitHub-hosted ubuntu-latest by
+# checking out the private monorepo and reusing composite actions from that checkout.
+# Copy the full private-repo secret set listed in docs/hub-provision-public-actions.md
+# onto this public repo (values stay out of git).
+
 name: Hub provision dispatch
 
 on:
