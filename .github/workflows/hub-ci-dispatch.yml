@@ -1,11 +1,3 @@
-# Copy to public repo: .github/workflows/hub-ci-dispatch.yml
-# Repository: marklovely/lovely-hub-provision (same as hub provision orchestrator)
-#
-# Runs private-repo CI on ubuntu-latest (free minutes on public repos).
-# Triggered by home-dashboard ci.yml (thin VPS dispatch) with checkout_sha.
-#
-# Secrets on the PUBLIC repo (see docs/public-ci-dispatch.md):
-#   HOME_DASHBOARD_REPO, HOME_DASHBOARD_DISPATCH_TOKEN, HOME_DASHBOARD_CHECKS_TOKEN
 
 name: Hub CI dispatch
 
