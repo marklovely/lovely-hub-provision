@@ -26,6 +26,7 @@ jobs:
     env:
       TZ: Europe/London
       HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
+      HOME_DASHBOARD_DISPATCH_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
       HOME_DASHBOARD_CHECKS_TOKEN: ${{ secrets.HOME_DASHBOARD_CHECKS_TOKEN }}
     steps:
       - uses: actions/checkout@v5
@@ -56,6 +57,7 @@ jobs:
     env:
       TZ: Europe/London
       HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
+      HOME_DASHBOARD_DISPATCH_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
       HOME_DASHBOARD_CHECKS_TOKEN: ${{ secrets.HOME_DASHBOARD_CHECKS_TOKEN }}
     steps:
       - uses: actions/checkout@v5
