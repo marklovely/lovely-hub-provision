@@ -1,0 +1,97 @@
+# Copy to public repo: .github/workflows/hub-ci-dispatch.yml
+# Repository: marklovely/lovely-hub-provision (same as hub provision orchestrator)
+#
+# Runs private-repo CI on ubuntu-latest (free minutes on public repos).
+# Triggered by home-dashboard ci.yml (thin VPS dispatch) with checkout_sha.
+#
+# Secrets on the PUBLIC repo (see docs/public-ci-dispatch.md):
+#   HOME_DASHBOARD_REPO, HOME_DASHBOARD_DISPATCH_TOKEN, HOME_DASHBOARD_CHECKS_TOKEN
+
+name: Hub CI dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      checkout_sha:
+        description: Commit on private home-dashboard to verify
+        required: true
+        type: string
+      head_ref:
+        description: Branch name (optional, for logs)
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hub-ci-${{ inputs.checkout_sha }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/London
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+
+      - name: Start check run (test)
+        id: check
+        env:
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/run-private-ci-check.mjs start test "${{ inputs.checkout_sha }}" "$DETAILS_URL"
+
+      - uses: ./.github/actions/monorepo-ci
+        with:
+          suite: test
+
+      - name: Complete check run (test)
+        if: always() && steps.check.outputs.check_run_id != ''
+        env:
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONCLUSION: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: node scripts/run-private-ci-check.mjs finish "${{ steps.check.outputs.check_run_id }}" "$CONCLUSION" "$DETAILS_URL"
+
+  hub-smoke:
+    name: Hub smoke (demo)
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/London
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+
+      - name: Start check run (Hub smoke)
+        id: check
+        env:
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/run-private-ci-check.mjs start "Hub smoke (demo)" "${{ inputs.checkout_sha }}" "$DETAILS_URL"
+
+      - uses: ./.github/actions/monorepo-ci
+        with:
+          suite: smoke
+
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: hub-smoke-playwright-report-${{ inputs.checkout_sha }}
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+
+      - name: Complete check run (Hub smoke)
+        if: always() && steps.check.outputs.check_run_id != ''
+        env:
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONCLUSION: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: node scripts/run-private-ci-check.mjs finish "${{ steps.check.outputs.check_run_id }}" "$CONCLUSION" "$DETAILS_URL"
