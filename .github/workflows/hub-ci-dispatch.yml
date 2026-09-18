@@ -34,8 +34,7 @@ jobs:
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           ref: ${{ inputs.checkout_sha }}
 
-      - name: Start check run (test)
-        id: check
+      - name: Start commit status (test)
         env:
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: node scripts/run-private-ci-check.mjs start test "${{ inputs.checkout_sha }}" "$DETAILS_URL"
@@ -44,12 +43,12 @@ jobs:
         with:
           suite: test
 
-      - name: Complete check run (test)
-        if: always() && steps.check.outputs.check_run_id != ''
+      - name: Complete commit status (test)
+        if: always()
         env:
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CONCLUSION: ${{ job.status == 'success' && 'success' || 'failure' }}
-        run: node scripts/run-private-ci-check.mjs finish "${{ steps.check.outputs.check_run_id }}" "$CONCLUSION" "$DETAILS_URL"
+        run: node scripts/run-private-ci-check.mjs finish test "${{ inputs.checkout_sha }}" "$CONCLUSION" "$DETAILS_URL"
 
   hub-smoke:
     name: Hub smoke (demo)
@@ -65,8 +64,7 @@ jobs:
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           ref: ${{ inputs.checkout_sha }}
 
-      - name: Start check run (Hub smoke)
-        id: check
+      - name: Start commit status (Hub smoke)
         env:
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: node scripts/run-private-ci-check.mjs start "Hub smoke (demo)" "${{ inputs.checkout_sha }}" "$DETAILS_URL"
@@ -84,9 +82,9 @@ jobs:
             test-results
           if-no-files-found: ignore
 
-      - name: Complete check run (Hub smoke)
-        if: always() && steps.check.outputs.check_run_id != ''
+      - name: Complete commit status (Hub smoke)
+        if: always()
         env:
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CONCLUSION: ${{ job.status == 'success' && 'success' || 'failure' }}
-        run: node scripts/run-private-ci-check.mjs finish "${{ steps.check.outputs.check_run_id }}" "$CONCLUSION" "$DETAILS_URL"
+        run: node scripts/run-private-ci-check.mjs finish "Hub smoke (demo)" "${{ inputs.checkout_sha }}" "$CONCLUSION" "$DETAILS_URL"
