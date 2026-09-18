@@ -1,4 +1,3 @@
-
 name: Hub CI dispatch
 
 on:
@@ -26,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: Europe/London
+      HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
+      HOME_DASHBOARD_CHECKS_TOKEN: ${{ secrets.HOME_DASHBOARD_CHECKS_TOKEN }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -55,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: Europe/London
+      HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
+      HOME_DASHBOARD_CHECKS_TOKEN: ${{ secrets.HOME_DASHBOARD_CHECKS_TOKEN }}
     steps:
       - uses: actions/checkout@v5
         with:
