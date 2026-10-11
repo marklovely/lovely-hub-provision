@@ -1,0 +1,107 @@
+name: Hub CD dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      checkout_sha:
+        description: Commit on private home-dashboard to build and deploy
+        required: true
+        type: string
+      sites:
+        description: Sites to deploy — all, or comma-separated (e.g. demo,larchmount)
+        required: true
+        default: all
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hub-cd-${{ inputs.checkout_sha }}-${{ inputs.sites }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      site_ids: ${{ steps.resolve.outputs.site_ids }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+
+      - uses: ./.github/actions/setup-node
+
+      - id: resolve
+        run: node scripts/resolve-hub-deploy-sites.mjs "${{ inputs.sites }}"
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.site_ids != '[]'
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/London
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: package-lock.json
+
+      - name: Build shared hub Pages artifact
+        run: bash scripts/build-hub-pages-artifact.sh
+
+      - name: Upload hub Pages artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: hub-pages-dist
+          retention-days: 14
+          path: |
+            dist/
+            dist-hub-functions/
+
+  deploy:
+    needs: [resolve, build]
+    if: needs.resolve.outputs.site_ids != '[]'
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/London
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    strategy:
+      fail-fast: false
+      # Six terraform-managed hubs today; raise toward 10 if the fleet grows (GitHub default org concurrency is often 20).
+      max-parallel: 6
+      matrix:
+        site_id: ${{ fromJson(needs.resolve.outputs.site_ids) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+
+      - name: Download hub Pages artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: hub-pages-dist
+
+      - name: Install dependencies (wrangler + Pages Functions bundle)
+        run: |
+          npm ci
+          npm ci --prefix worker
+
+      - name: Deploy to hub
+        run: bash scripts/deploy-hub-pages-from-artifact.sh "${{ matrix.site_id }}"
