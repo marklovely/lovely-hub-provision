@@ -1,0 +1,204 @@
+name: E2E sandbox cleanup dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_ids:
+        description: Comma-separated e2e-* site ids (empty = Stripe discovery)
+        required: false
+        type: string
+        default: ''
+      dry_run:
+        description: List candidates only — do not billing-deprovision
+        required: false
+        type: boolean
+        default: true
+      checkout_ref:
+        description: home-dashboard ref for list/deprovision scripts (branch, tag, or SHA)
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  PLATFORM_API_ORIGIN: https://platform-sandbox.lovely-home.co.uk
+  PLATFORM_PAGES_PROJECT: home-dashboard-platform-sandbox
+  PAGES_BRANCH: sandbox
+  LOVELY_STACK: sandbox
+  PLATFORM_MANIFEST_SANDBOX: '1'
+
+jobs:
+  resolve-ref:
+    runs-on: ubuntu-latest
+    outputs:
+      checkout_ref: ${{ steps.ref.outputs.ref }}
+    steps:
+      - id: ref
+        run: |
+          REF="$(printf '%s' '${{ inputs.checkout_ref }}' | tr -d '[:space:]')"
+          echo "ref=${REF:-main}" >> "$GITHUB_OUTPUT"
+
+  resolve-orphans:
+    needs: resolve-ref
+    runs-on: ubuntu-latest
+    outputs:
+      site_ids: ${{ steps.list.outputs.site_ids }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ needs.resolve-ref.outputs.checkout_ref }}
+
+      - uses: ./.github/actions/setup-node
+
+      - name: Sandbox-only guard
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          PLATFORM_API_ORIGIN: ${{ env.PLATFORM_API_ORIGIN }}
+        run: |
+          set -euo pipefail
+          STRIPE_SECRET_KEY="${STRIPE_SECRET_KEY#"${STRIPE_SECRET_KEY%%[![:space:]]*}"}"
+          STRIPE_SECRET_KEY="${STRIPE_SECRET_KEY%"${STRIPE_SECRET_KEY##*[![:space:]]}"}"
+          case "${STRIPE_SECRET_KEY:-}" in
+            sk_test_*|rk_test_*) ;;
+            sk_live_*|rk_live_*)
+              echo "::error::STRIPE_SECRET_KEY is a live key. This workflow only runs against Stripe test mode on platform-sandbox."
+              exit 1
+              ;;
+            *)
+              echo "::error::STRIPE_SECRET_KEY must be a Stripe test key (sk_test_ / rk_test_)."
+              exit 1
+              ;;
+          esac
+          if [ "${PLATFORM_API_ORIGIN}" != "https://platform-sandbox.lovely-home.co.uk" ]; then
+            echo "::error::Refusing to run: PLATFORM_API_ORIGIN must be the sandbox platform (${PLATFORM_API_ORIGIN})."
+            exit 1
+          fi
+
+      - id: list
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          E2E_OWNER_EMAIL: ${{ secrets.E2E_OWNER_EMAIL }}
+          PLATFORM_API_ORIGIN: ${{ env.PLATFORM_API_ORIGIN }}
+          INPUT_SITE_IDS: ${{ inputs.site_ids }}
+        run: |
+          set -euo pipefail
+          ARGS=(--json)
+          if [ -z "${INPUT_SITE_IDS// /}" ]; then
+            ARGS+=(--orphans-only --require-any)
+            node scripts/list-e2e-orphan-hubs.mjs "${ARGS[@]}"
+          else
+            node scripts/list-e2e-orphan-hubs.mjs "${ARGS[@]}" "${INPUT_SITE_IDS}"
+          fi
+
+  billing-deprovision:
+    needs: [resolve-ref, resolve-orphans]
+    if: inputs.dry_run != true && needs.resolve-orphans.outputs.site_ids != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        site_id: ${{ fromJson(needs.resolve-orphans.outputs.site_ids) }}
+    concurrency:
+      group: platform-terraform-state-customers-${{ matrix.site_id }}
+      cancel-in-progress: false
+    env:
+      TZ: Europe/London
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+      CUSTOMER_CLOUDFLARE_ZONE_ID: ${{ secrets.CUSTOMER_CLOUDFLARE_ZONE_ID }}
+      CUSTOMER_ZONE_NAME: ${{ secrets.CUSTOMER_ZONE_NAME }}
+      WORKERS_SUBDOMAIN: ${{ secrets.WORKERS_SUBDOMAIN }}
+      ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN }}
+      OWNER_EMAILS: ${{ secrets.OWNER_EMAILS }}
+      SUPPORT_OWNER_EMAILS: ${{ secrets.SUPPORT_OWNER_EMAILS }}
+      PLATFORM_OPERATOR_EMAILS: ${{ secrets.PLATFORM_OPERATOR_EMAILS }}
+      SITTER_EMAILS: ${{ secrets.SITTER_EMAILS }}
+      HUB_PROXY_SECRETS_JSON: ${{ secrets.HUB_PROXY_SECRETS_JSON }}
+      PLATFORM_GITHUB_TOKEN: ${{ secrets.PLATFORM_GITHUB_TOKEN }}
+      PLATFORM_CF_API_TOKEN: ${{ secrets.PLATFORM_CF_API_TOKEN }}
+      PLATFORM_OPENAI_ADMIN_KEY: ${{ secrets.PLATFORM_OPENAI_ADMIN_KEY }}
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+      STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+      STRIPE_PRICE_ID: ${{ secrets.STRIPE_PRICE_ID }}
+      STRIPE_PRICE_ID_YEARLY: ${{ secrets.STRIPE_PRICE_ID_YEARLY }}
+      STRIPE_SECRET_KEY_LIVE: ${{ secrets.STRIPE_SECRET_KEY_LIVE }}
+      STRIPE_WEBHOOK_SECRET_LIVE: ${{ secrets.STRIPE_WEBHOOK_SECRET_LIVE }}
+      STRIPE_PRICE_ID_LIVE: ${{ secrets.STRIPE_PRICE_ID_LIVE }}
+      STRIPE_PRICE_ID_YEARLY_LIVE: ${{ secrets.STRIPE_PRICE_ID_YEARLY_LIVE }}
+      TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
+      TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      CUSTOMER_EMAIL_FROM: ${{ secrets.CUSTOMER_EMAIL_FROM }}
+      PLATFORM_SIGNUP_NOTIFY_EMAIL: ${{ secrets.PLATFORM_SIGNUP_NOTIFY_EMAIL }}
+      PLATFORM_SITE_ARCHIVE_SECRET: ${{ secrets.PLATFORM_SITE_ARCHIVE_SECRET }}
+      PLATFORM_HEALTH_CF_ACCESS_CLIENT_ID: ${{ secrets.PLATFORM_HEALTH_CF_ACCESS_CLIENT_ID }}
+      PLATFORM_HEALTH_CF_ACCESS_CLIENT_SECRET: ${{ secrets.PLATFORM_HEALTH_CF_ACCESS_CLIENT_SECRET }}
+      PLATFORM_ARCHIVE_R2_BUCKET: ${{ secrets.PLATFORM_ARCHIVE_R2_BUCKET }}
+      GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+      OS_PLACES_API_KEY: ${{ secrets.OS_PLACES_API_KEY }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.TF_STATE_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.TF_STATE_R2_SECRET_ACCESS_KEY }}
+      TF_STATE_R2_BUCKET: ${{ secrets.TF_STATE_R2_BUCKET }}
+      TF_STATE_R2_ENDPOINT: ${{ secrets.TF_STATE_R2_ENDPOINT }}
+      TERRAFORM_STACK: customers
+      TF_VAR_terraform_stack: customers
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ needs.resolve-ref.outputs.checkout_ref }}
+          fetch-depth: 0
+
+      - uses: ./.github/actions/billing-deprovision-hub
+        with:
+          site_id: ${{ matrix.site_id }}
+          terraform_stack: customers
+          prune_public_repo_secrets: 'true'
+          skip_platform_admin: 'true'
+
+  redeploy-sandbox-platform-admin:
+    needs: [resolve-orphans, billing-deprovision]
+    if: inputs.dry_run != true && needs.resolve-orphans.outputs.site_ids != '[]'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: e2e-sandbox-platform-admin-deploy
+      cancel-in-progress: false
+    env:
+      TZ: Europe/London
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PLATFORM_PAGES_PROJECT: home-dashboard-platform-sandbox
+      PAGES_BRANCH: sandbox
+      LOVELY_STACK: sandbox
+      PLATFORM_MANIFEST_SANDBOX: '1'
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: main
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-node
+
+      - name: Sync main after matrix registry drops
+        run: git pull --ff-only origin main
+
+      - name: Install worker dependencies (wrangler)
+        run: npm ci --prefix worker
+
+      - name: Rebuild manifest, purge sandbox billing D1, deploy platform admin
+        env:
+          CLEANUP_SITE_IDS: ${{ needs.resolve-orphans.outputs.site_ids }}
+        run: |
+          node scripts/build-platform-manifest.mjs
+          node scripts/purge-platform-sites-from-json.mjs "$CLEANUP_SITE_IDS"
+          bash scripts/deploy-platform-admin.sh
