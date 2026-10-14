@@ -145,12 +145,34 @@ jobs:
 
       - run: npm run test:lifecycle
 
+      - name: Upload Playwright report to R2
+        id: e2e_report_r2
+        if: always()
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          E2E_REPORTS_R2_BUCKET: ${{ secrets.E2E_REPORTS_R2_BUCKET }}
+          E2E_REPORTS_PUBLIC_BASE_URL: ${{ secrets.E2E_REPORTS_PUBLIC_BASE_URL }}
+        run: node scripts/upload-e2e-playwright-report-r2.mjs
+
       - name: Playwright job summary
         if: always()
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SIGNUP_PLAN: ${{ matrix.signup_plan }}
+          artifact_url: ${{ steps.e2e_report_r2.outputs.artifact_url }}
         run: node scripts/write-playwright-run-summary.mjs
+
+      - name: Record lifecycle run (platform API)
+        if: always()
+        env:
+          PLATFORM_API_ORIGIN: ${{ env.PLATFORM_API_ORIGIN }}
+          E2E_LIFECYCLE_CF_ACCESS_CLIENT_ID: ${{ secrets.E2E_LIFECYCLE_CF_ACCESS_CLIENT_ID }}
+          E2E_LIFECYCLE_CF_ACCESS_CLIENT_SECRET: ${{ secrets.E2E_LIFECYCLE_CF_ACCESS_CLIENT_SECRET }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_CONCLUSION: ${{ job.status }}
+          artifact_url: ${{ steps.e2e_report_r2.outputs.artifact_url }}
+        run: node scripts/post-e2e-lifecycle-run.mjs
 
       - uses: actions/upload-artifact@v7
         if: always()
