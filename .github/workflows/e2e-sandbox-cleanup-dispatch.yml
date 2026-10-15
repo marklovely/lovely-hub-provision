@@ -150,6 +150,7 @@ jobs:
       TERRAFORM_STACK: customers
       TF_VAR_terraform_stack: customers
       PLATFORM_GITHUB_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
+      SKIP_PLATFORM_HUB_ARCHIVE_FOR_E2E: '1'
     steps:
       - uses: actions/checkout@v5
         with:
@@ -164,6 +165,7 @@ jobs:
           terraform_stack: customers
           prune_public_repo_secrets: 'true'
           skip_platform_admin: 'true'
+          skip_platform_hub_archive: 'true'
 
   redeploy-sandbox-platform-admin:
     needs: [resolve-orphans, billing-deprovision]
