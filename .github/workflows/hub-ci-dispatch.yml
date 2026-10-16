@@ -93,7 +93,8 @@ jobs:
 
   hub-visual:
     name: Hub visual
-    runs-on: ubuntu-latest
+    # Pinned: baselines depend on the OS fonts; ubuntu-latest moves to 26 on 2026-10-19.
+    runs-on: ubuntu-24.04
     env:
       TZ: Europe/London
       HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
