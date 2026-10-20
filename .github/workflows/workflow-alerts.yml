@@ -1,0 +1,34 @@
+name: Workflow alerts (Slack)
+
+on:
+  workflow_run:
+    types: [completed]
+    workflows:
+      - Hub lifecycle dispatch
+      - Hub provision dispatch
+      - Hub CD dispatch
+      - E2E sandbox cleanup dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Post to Slack
+    # Keep in sync with REGRESSION_WORKFLOWS below.
+    if: >-
+      contains(fromJSON('["failure","cancelled","timed_out","startup_failure"]'), github.event.workflow_run.conclusion) ||
+      (github.event.workflow_run.name == 'Hub lifecycle dispatch' && github.event.workflow_run.conclusion != 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          sparse-checkout: scripts
+      - name: Post run to Slack
+        env:
+          SLACK_WORKFLOWS_WEBHOOK_URL: ${{ secrets.SLACK_WORKFLOWS_WEBHOOK_URL }}
+          REGRESSION_WORKFLOWS: Hub lifecycle dispatch
+        run: node scripts/notify-workflow-run-slack.mjs
