@@ -26,7 +26,7 @@ jobs:
     outputs:
       site_ids: ${{ steps.resolve.outputs.site_ids }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -44,7 +44,7 @@ jobs:
     env:
       TZ: Europe/London
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -81,7 +81,7 @@ jobs:
       matrix:
         site_id: ${{ fromJson(needs.resolve.outputs.site_ids) }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
