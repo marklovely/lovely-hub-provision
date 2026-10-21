@@ -47,7 +47,7 @@ jobs:
     outputs:
       site_ids: ${{ steps.list.outputs.site_ids }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -152,7 +152,7 @@ jobs:
       PLATFORM_GITHUB_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
       SKIP_PLATFORM_HUB_ARCHIVE_FOR_E2E: '1'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -184,7 +184,7 @@ jobs:
       PLATFORM_MANIFEST_SANDBOX: '1'
       PLATFORM_GITHUB_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
