@@ -93,7 +93,7 @@ jobs:
       PLATFORM_API_ORIGIN: ${{ inputs.platform_api_origin || 'https://platform-sandbox.lovely-home.co.uk' }}
       MARKETING_ORIGIN: ${{ inputs.marketing_origin || 'https://marketing-sandbox.lovely-home.co.uk' }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
