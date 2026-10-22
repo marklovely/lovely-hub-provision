@@ -91,6 +91,37 @@ jobs:
           CONCLUSION: ${{ job.status == 'success' && 'success' || 'failure' }}
         run: node scripts/run-private-ci-check.mjs finish "Hub smoke (demo)" "${{ inputs.checkout_sha }}" "$CONCLUSION" "$DETAILS_URL"
 
+  site-checks:
+    name: Site checks
+    runs-on: ubuntu-latest
+    env:
+      HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+
+      - name: Start commit status (Site checks)
+        env:
+          PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/run-private-ci-check.mjs start "Site checks" "${{ inputs.checkout_sha }}" "$DETAILS_URL"
+
+      # Marketing site + account pages against the real platform API code, run locally (#1108).
+      - uses: ./.github/actions/monorepo-ci
+        with:
+          suite: site
+
+      - name: Complete commit status (Site checks)
+        if: always()
+        env:
+          PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONCLUSION: ${{ job.status == 'success' && 'success' || 'failure' }}
+        run: node scripts/run-private-ci-check.mjs finish "Site checks" "${{ inputs.checkout_sha }}" "$CONCLUSION" "$DETAILS_URL"
+
   hub-visual:
     name: Hub visual
     # Pinned: baselines depend on the OS fonts; ubuntu-latest moves to 26 on 2026-10-19.
