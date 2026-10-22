@@ -30,6 +30,11 @@ on:
         required: false
         default: https://marketing-sandbox.lovely-home.co.uk
         type: string
+      deploy_sandbox:
+        description: Deploy checkout_ref to marketing-sandbox + platform-sandbox first
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -68,9 +73,46 @@ jobs:
               ;;
           esac
 
+  deploy-sandbox:
+    name: Deploy ref to sandbox
+    needs: resolve-plans
+    # Scheduled runs have no inputs: deploy (main). Manual runs: unless deploy_sandbox is off.
+    if: github.event_name == 'schedule' || inputs.deploy_sandbox != false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PAGES_BRANCH: sandbox
+      SANDBOX_MARKETING_PAGES_PRODUCTION_BRANCH: main
+      LOVELY_STACK: sandbox
+      PLATFORM_MANIFEST_SANDBOX: '1'
+      SANDBOX_MARKETING_PAGES_PROJECT: lovely-home-sandbox
+      SANDBOX_PLATFORM_PAGES_PROJECT: home-dashboard-platform-sandbox
+      SANDBOX_MARKETING_SITE_ORIGIN: https://marketing-sandbox.lovely-home.co.uk
+      SANDBOX_PLATFORM_SITE_ORIGIN: https://platform-sandbox.lovely-home.co.uk
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ needs.resolve-plans.outputs.checkout_ref }}
+
+      - uses: ./.github/actions/setup-node
+
+      - run: npm ci
+
+      # Same script as the private "Deploy sandbox Lovely Home" workflow.
+      - name: Deploy marketing-sandbox + platform-sandbox
+        run: bash scripts/deploy-sandbox-lovely-home.sh
+
   lifecycle:
     name: Lifecycle (${{ matrix.signup_plan }})
-    needs: resolve-plans
+    needs: [resolve-plans, deploy-sandbox]
+    # Run when the sandbox deploy succeeded or was switched off — never on a half-deployed sandbox.
+    if: >-
+      always() && needs.resolve-plans.result == 'success' &&
+      (needs.deploy-sandbox.result == 'success' || needs.deploy-sandbox.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
