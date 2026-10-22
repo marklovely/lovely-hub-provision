@@ -151,7 +151,16 @@ jobs:
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN || secrets.HOME_DASHBOARD_CHECKOUT_TOKEN }}
           ref: ${{ needs.resolve-stack.outputs.checkout_ref }}
 
+      # A late or duplicate provision must not rebuild a home that was cancelled or is being
+      # torn down (#1106). Fails open: if billing can't be read, it provisions as before.
+      - uses: ./.github/actions/setup-node
+
+      - name: Skip if the home was cancelled meanwhile
+        id: wanted
+        run: node scripts/check-provision-still-wanted.mjs "${{ inputs.site_id }}"
+
       - uses: ./.github/actions/hub-manual-provision
+        if: steps.wanted.outputs.skip != 'true'
         with:
           site_id: ${{ inputs.site_id }}
           terraform_stack: ${{ needs.resolve-stack.outputs.terraform_stack }}
