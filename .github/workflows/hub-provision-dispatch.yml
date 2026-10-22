@@ -1,4 +1,6 @@
 name: Hub provision dispatch
+# The hub-jobs Worker finds its own run by this title (#1100).
+run-name: ${{ inputs.job_action }} ${{ inputs.site_id }} · Hub provision dispatch
 
 on:
   workflow_dispatch:
