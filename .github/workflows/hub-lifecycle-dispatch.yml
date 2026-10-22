@@ -116,7 +116,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
-      fail-fast: true
+      # Each plan reports on its own: a Free failure used to cancel Plus mid-run (#1112).
+      fail-fast: false
       max-parallel: 1
       matrix:
         signup_plan: ${{ fromJson(needs.resolve-plans.outputs.signup_plans) }}
