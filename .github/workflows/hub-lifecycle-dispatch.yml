@@ -1,9 +1,8 @@
 name: Hub lifecycle dispatch
 
 on:
-  schedule:
-    # 02:00 UTC nightly — free then plus (serial matrix)
-    - cron: '0 2 * * *'
+  # Nightly at 02:00 UTC is dispatched by the production hub-jobs Worker's Cloudflare cron
+  # (#1121) — GitHub's own schedule started this ~5 hours late every night.
   workflow_dispatch:
     inputs:
       signup_plan:
