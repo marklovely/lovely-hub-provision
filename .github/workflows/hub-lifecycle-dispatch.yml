@@ -79,6 +79,9 @@ jobs:
     if: github.event_name == 'schedule' || inputs.deploy_sandbox != false
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      # The one commit sandbox runs for this whole run (#1135).
+      sha: ${{ steps.sha.outputs.sha }}
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -104,6 +107,9 @@ jobs:
       # Same script as the private "Deploy sandbox Lovely Home" workflow.
       - name: Deploy marketing-sandbox + platform-sandbox
         run: bash scripts/deploy-sandbox-lovely-home.sh
+
+      - id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   lifecycle:
     name: Lifecycle (${{ matrix.signup_plan }})
@@ -185,7 +191,30 @@ jobs:
 
       - run: npx playwright install chromium --with-deps
 
+      # One commit for the whole run (#1135): platform-sandbox must serve the commit the
+      # deploy job put there (or, with deploy_sandbox off, the one it serves now) before
+      # and after the plan. Its test homes are built from that same commit (#1129).
+      - name: Sandbox runs the commit under test
+        id: sandbox_commit
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOYED_SHA: ${{ needs.deploy-sandbox.outputs.sha }}
+        run: |
+          set -euo pipefail
+          SHA="${DEPLOYED_SHA:-$(node scripts/lib/pages-production-deploy.mjs live-commit --project home-dashboard-platform-sandbox)}"
+          node scripts/lib/pages-production-deploy.mjs verify --project home-dashboard-platform-sandbox --commit "$SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "::notice::Testing ${SHA:0:12} on platform-sandbox and its test homes."
+
       - run: npm run test:lifecycle
+
+      - name: Sandbox stayed on the commit under test
+        if: always() && steps.sandbox_commit.outcome == 'success'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/lib/pages-production-deploy.mjs verify --project home-dashboard-platform-sandbox --commit "${{ steps.sandbox_commit.outputs.sha }}"
 
       - name: Upload Playwright report to R2
         id: e2e_report_r2
