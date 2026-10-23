@@ -40,9 +40,10 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       terraform_stack: ${{ steps.resolve.outputs.terraform_stack }}
-      # Customer homes and every teardown: HOME_DASHBOARD_REF (else main). Lifecycle test
-      # homes (e2e-*, sandbox billing): the commit platform-sandbox serves (#1129).
-      checkout_ref: ${{ steps.code_ref.outputs.ref || steps.ref.outputs.ref }}
+      # Lifecycle test homes (e2e-*, sandbox billing): the commit platform-sandbox serves
+      # (#1129). Empty otherwise: the jobs then read HOME_DASHBOARD_REF themselves. GitHub
+      # drops a job output equal to a secret's value, so the secret can't travel as one (#1120).
+      checkout_ref: ${{ steps.code_ref.outputs.ref }}
     steps:
       - name: Resolve private repo ref
         id: ref
@@ -159,7 +160,7 @@ jobs:
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN || secrets.HOME_DASHBOARD_CHECKOUT_TOKEN }}
-          ref: ${{ needs.resolve-stack.outputs.checkout_ref }}
+          ref: ${{ needs.resolve-stack.outputs.checkout_ref || secrets.HOME_DASHBOARD_REF || 'main' }}
 
       # A late or duplicate provision must not rebuild a home that was cancelled or is being
       # torn down (#1106). Fails open: if billing can't be read, it provisions as before.
@@ -230,7 +231,7 @@ jobs:
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN || secrets.HOME_DASHBOARD_CHECKOUT_TOKEN }}
-          ref: ${{ needs.resolve-stack.outputs.checkout_ref }}
+          ref: ${{ needs.resolve-stack.outputs.checkout_ref || secrets.HOME_DASHBOARD_REF || 'main' }}
           fetch-depth: 0
 
       - uses: ./.github/actions/billing-deprovision-hub
