@@ -40,7 +40,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       terraform_stack: ${{ steps.resolve.outputs.terraform_stack }}
-      checkout_ref: ${{ steps.ref.outputs.ref }}
+      # Customer homes and every teardown: HOME_DASHBOARD_REF (else main). Lifecycle test
+      # homes (e2e-*, sandbox billing): the commit platform-sandbox serves (#1129).
+      checkout_ref: ${{ steps.code_ref.outputs.ref || steps.ref.outputs.ref }}
     steps:
       - name: Resolve private repo ref
         id: ref
@@ -85,6 +87,14 @@ jobs:
         run: |
           STACK=$(node scripts/terraform-stack-for-site.mjs "$SITE_ID" --guess)
           echo "terraform_stack=$STACK" >> "$GITHUB_OUTPUT"
+
+      - name: Which code builds this hub
+        id: code_ref
+        if: inputs.job_action == 'provision'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/resolve-hub-code-ref.mjs "${{ inputs.site_id }}" "${{ steps.ref.outputs.ref }}"
 
   hub-provision:
     if: inputs.job_action == 'provision'
