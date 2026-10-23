@@ -199,10 +199,26 @@ jobs:
       - name: Install worker dependencies (wrangler)
         run: npm ci --prefix worker
 
-      - name: Rebuild manifest, purge sandbox billing D1, deploy platform admin
+      - name: Purge sandbox billing D1
         env:
           CLEANUP_SITE_IDS: ${{ needs.resolve-orphans.outputs.site_ids }}
-        run: |
-          node scripts/build-platform-manifest.mjs
-          node scripts/purge-platform-sites-from-json.mjs "$CLEANUP_SITE_IDS"
-          bash scripts/deploy-platform-admin.sh
+        run: node scripts/purge-platform-sites-from-json.mjs "$CLEANUP_SITE_IDS"
+
+      # One commit on sandbox (#1135): refresh the site list on the commit platform-sandbox
+      # already serves, never by deploying main over the code under test.
+      - name: Which commit platform-sandbox serves
+        id: sandbox_live
+        run: echo "sha=$(node scripts/lib/pages-production-deploy.mjs live-commit --project "$PLATFORM_PAGES_PROJECT")" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the commit platform-sandbox serves
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ steps.sandbox_live.outputs.sha }}
+          path: .sandbox-live
+
+      - name: Refresh platform-sandbox's site list (same commit)
+        env:
+          SANDBOX_PLATFORM_PAGES_PROJECT: ${{ env.PLATFORM_PAGES_PROJECT }}
+        run: bash scripts/refresh-sandbox-platform.sh .sandbox-live "${{ steps.sandbox_live.outputs.sha }}"
