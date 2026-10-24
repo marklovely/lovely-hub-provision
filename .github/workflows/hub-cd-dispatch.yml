@@ -93,10 +93,12 @@ jobs:
             package-lock.json
             worker/package-lock.json
 
+      # The artifact holds dist/'s contents at its root (one upload path), so unpack it back into dist/ (#1194).
       - name: Download hub Pages artifact
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: hub-pages-dist
+          path: dist
 
       - name: Install dependencies (wrangler + Pages Functions bundle)
         run: |
