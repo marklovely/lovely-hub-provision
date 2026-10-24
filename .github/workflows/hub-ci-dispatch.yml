@@ -27,7 +27,7 @@ jobs:
       TZ: Europe/London
       HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -37,7 +37,8 @@ jobs:
         env:
           PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: node scripts/run-private-ci-check.mjs start test "${{ inputs.checkout_sha }}" "$DETAILS_URL"
+          INPUT_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: node scripts/run-private-ci-check.mjs start test "${INPUT_CHECKOUT_SHA}" "$DETAILS_URL"
 
       - uses: ./.github/actions/monorepo-ci
         with:
@@ -49,7 +50,8 @@ jobs:
           PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CONCLUSION: ${{ job.status == 'success' && 'success' || 'failure' }}
-        run: node scripts/run-private-ci-check.mjs finish test "${{ inputs.checkout_sha }}" "$CONCLUSION" "$DETAILS_URL"
+          INPUT_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: node scripts/run-private-ci-check.mjs finish test "${INPUT_CHECKOUT_SHA}" "$CONCLUSION" "$DETAILS_URL"
 
   hub-smoke:
     name: Hub smoke (demo)
@@ -60,7 +62,7 @@ jobs:
       TZ: Europe/London
       HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -70,14 +72,15 @@ jobs:
         env:
           PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: node scripts/run-private-ci-check.mjs start "Hub smoke (demo)" "${{ inputs.checkout_sha }}" "$DETAILS_URL"
+          INPUT_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: node scripts/run-private-ci-check.mjs start "Hub smoke (demo)" "${INPUT_CHECKOUT_SHA}" "$DETAILS_URL"
 
       - uses: ./.github/actions/monorepo-ci
         with:
           suite: smoke
           demo-test-bypass: ${{ secrets.DEMO_TEST_BYPASS }}
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:
           name: hub-smoke-playwright-report-${{ inputs.checkout_sha }}
@@ -95,7 +98,8 @@ jobs:
           PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CONCLUSION: ${{ job.status == 'success' && 'success' || 'failure' }}
-        run: node scripts/run-private-ci-check.mjs finish "Hub smoke (demo)" "${{ inputs.checkout_sha }}" "$CONCLUSION" "$DETAILS_URL"
+          INPUT_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: node scripts/run-private-ci-check.mjs finish "Hub smoke (demo)" "${INPUT_CHECKOUT_SHA}" "$CONCLUSION" "$DETAILS_URL"
 
   site-checks:
     name: Site checks
@@ -103,7 +107,7 @@ jobs:
     env:
       HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -113,7 +117,8 @@ jobs:
         env:
           PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: node scripts/run-private-ci-check.mjs start "Site checks" "${{ inputs.checkout_sha }}" "$DETAILS_URL"
+          INPUT_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: node scripts/run-private-ci-check.mjs start "Site checks" "${INPUT_CHECKOUT_SHA}" "$DETAILS_URL"
 
       # Marketing site + account pages against the real platform API code, run locally (#1108).
       - uses: ./.github/actions/monorepo-ci
@@ -126,7 +131,8 @@ jobs:
           PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CONCLUSION: ${{ job.status == 'success' && 'success' || 'failure' }}
-        run: node scripts/run-private-ci-check.mjs finish "Site checks" "${{ inputs.checkout_sha }}" "$CONCLUSION" "$DETAILS_URL"
+          INPUT_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: node scripts/run-private-ci-check.mjs finish "Site checks" "${INPUT_CHECKOUT_SHA}" "$CONCLUSION" "$DETAILS_URL"
 
   hub-visual:
     name: Hub visual
@@ -136,7 +142,7 @@ jobs:
       TZ: Europe/London
       HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -146,7 +152,8 @@ jobs:
         env:
           PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: node scripts/run-private-ci-check.mjs start "Hub visual" "${{ inputs.checkout_sha }}" "$DETAILS_URL"
+          INPUT_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: node scripts/run-private-ci-check.mjs start "Hub visual" "${INPUT_CHECKOUT_SHA}" "$DETAILS_URL"
 
       - uses: ./.github/actions/monorepo-ci
         with:
@@ -154,7 +161,7 @@ jobs:
 
       # On failure, test-results/ holds *-actual.png and *-diff.png for each changed screen.
       # If the change is intended, copy the -actual.png files over e2e/hub-visual.spec.js-snapshots/.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:
           name: hub-visual-diff-${{ inputs.checkout_sha }}
@@ -172,4 +179,5 @@ jobs:
           PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CONCLUSION: ${{ job.status == 'success' && 'success' || 'failure' }}
-        run: node scripts/run-private-ci-check.mjs finish "Hub visual" "${{ inputs.checkout_sha }}" "$CONCLUSION" "$DETAILS_URL"
+          INPUT_CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+        run: node scripts/run-private-ci-check.mjs finish "Hub visual" "${INPUT_CHECKOUT_SHA}" "$CONCLUSION" "$DETAILS_URL"
