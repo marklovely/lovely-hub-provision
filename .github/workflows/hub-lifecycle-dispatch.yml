@@ -245,12 +245,5 @@ jobs:
           artifact_url: ${{ steps.e2e_report_r2.outputs.artifact_url }}
         run: node scripts/post-e2e-lifecycle-run.mjs
 
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: playwright-report-${{ matrix.signup_plan }}-${{ github.run_id }}
-          path: |
-            playwright-report
-            test-results
-          retention-days: 30
-          if-no-files-found: ignore
+      # No GitHub artifact (#1169): the report (with traces) is in private R2 above, and anyone
+      # can download artifacts on this public repo.
