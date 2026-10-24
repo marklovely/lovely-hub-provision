@@ -26,7 +26,7 @@ jobs:
     outputs:
       site_ids: ${{ steps.resolve.outputs.site_ids }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -35,7 +35,9 @@ jobs:
       - uses: ./.github/actions/setup-node
 
       - id: resolve
-        run: node scripts/resolve-hub-deploy-sites.mjs "${{ inputs.sites }}"
+        env:
+          INPUT_SITES: ${{ inputs.sites }}
+        run: node scripts/resolve-hub-deploy-sites.mjs "${INPUT_SITES}"
 
   build:
     needs: resolve
@@ -44,7 +46,7 @@ jobs:
     env:
       TZ: Europe/London
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -60,7 +62,7 @@ jobs:
       # Anyone can download artifacts on this public repo (#1169): ship only the built front end
       # (the same files every hub serves), keep it one day, and stage Functions in the deploy job.
       - name: Upload hub Pages artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: hub-pages-dist
           retention-days: 1
@@ -79,7 +81,7 @@ jobs:
       matrix:
         site_id: ${{ fromJson(needs.resolve.outputs.site_ids) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -92,7 +94,7 @@ jobs:
             worker/package-lock.json
 
       - name: Download hub Pages artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: hub-pages-dist
 
