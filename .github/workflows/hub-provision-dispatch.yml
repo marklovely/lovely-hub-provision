@@ -41,7 +41,8 @@ jobs:
     outputs:
       terraform_stack: ${{ steps.resolve.outputs.terraform_stack }}
       # Lifecycle test homes (e2e-*, sandbox billing): the commit platform-sandbox serves
-      # (#1129). Empty otherwise: the jobs then read HOME_DASHBOARD_REF themselves. GitHub
+      # (#1129), for the teardown too, so it speaks the same hub contract as the code that
+      # built the home (#1197). Empty otherwise: the jobs then read HOME_DASHBOARD_REF themselves. GitHub
       # drops a job output equal to a secret's value, so the secret can't travel as one (#1120).
       checkout_ref: ${{ steps.code_ref.outputs.ref }}
     steps:
@@ -91,7 +92,6 @@ jobs:
 
       - name: Which code builds this hub
         id: code_ref
-        if: inputs.job_action == 'provision'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
