@@ -37,8 +37,10 @@ jobs:
       checkout_ref: ${{ steps.ref.outputs.ref }}
     steps:
       - id: ref
+        env:
+          INPUT_CHECKOUT_REF: ${{ inputs.checkout_ref }}
         run: |
-          REF="$(printf '%s' '${{ inputs.checkout_ref }}' | tr -d '[:space:]')"
+          REF="$(printf '%s' "${INPUT_CHECKOUT_REF}" | tr -d '[:space:]')"
           echo "ref=${REF:-main}" >> "$GITHUB_OUTPUT"
 
   resolve-orphans:
@@ -47,7 +49,7 @@ jobs:
     outputs:
       site_ids: ${{ steps.list.outputs.site_ids }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -152,7 +154,7 @@ jobs:
       PLATFORM_GITHUB_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
       SKIP_PLATFORM_HUB_ARCHIVE_FOR_E2E: '1'
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -184,7 +186,7 @@ jobs:
       PLATFORM_MANIFEST_SANDBOX: '1'
       PLATFORM_GITHUB_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -211,7 +213,7 @@ jobs:
         run: echo "sha=$(node scripts/lib/pages-production-deploy.mjs live-commit --project "$PLATFORM_PAGES_PROJECT")" >> "$GITHUB_OUTPUT"
 
       - name: Checkout the commit platform-sandbox serves
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
@@ -221,4 +223,5 @@ jobs:
       - name: Refresh platform-sandbox's site list (same commit)
         env:
           SANDBOX_PLATFORM_PAGES_PROJECT: ${{ env.PLATFORM_PAGES_PROJECT }}
-        run: bash scripts/refresh-sandbox-platform.sh .sandbox-live "${{ steps.sandbox_live.outputs.sha }}"
+          STEP_SANDBOX_LIVE_SHA: ${{ steps.sandbox_live.outputs.sha }}
+        run: bash scripts/refresh-sandbox-platform.sh .sandbox-live "${STEP_SANDBOX_LIVE_SHA}"
