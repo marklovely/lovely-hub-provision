@@ -57,14 +57,14 @@ jobs:
       - name: Build shared hub Pages artifact
         run: bash scripts/build-hub-pages-artifact.sh
 
+      # Anyone can download artifacts on this public repo (#1169): ship only the built front end
+      # (the same files every hub serves), keep it one day, and stage Functions in the deploy job.
       - name: Upload hub Pages artifact
         uses: actions/upload-artifact@v7
         with:
           name: hub-pages-dist
-          retention-days: 14
-          path: |
-            dist/
-            dist-hub-functions/
+          retention-days: 1
+          path: dist/
 
   deploy:
     needs: [resolve, build]
