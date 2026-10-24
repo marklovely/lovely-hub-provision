@@ -81,9 +81,12 @@ jobs:
         if: failure()
         with:
           name: hub-smoke-playwright-report-${{ inputs.checkout_sha }}
+          # Screenshots and error notes only (#1169): traces, videos and the HTML report carry
+          # request headers and cookies, and anyone can download artifacts on this public repo.
           path: |
-            playwright-report
-            test-results
+            test-results/**/*.png
+            test-results/**/error-context.md
+          retention-days: 7
           if-no-files-found: ignore
 
       - name: Complete commit status (Hub smoke)
@@ -155,9 +158,12 @@ jobs:
         if: failure()
         with:
           name: hub-visual-diff-${{ inputs.checkout_sha }}
+          # Screenshots and error notes only (#1169): traces, videos and the HTML report carry
+          # request headers and cookies, and anyone can download artifacts on this public repo.
           path: |
-            playwright-report
-            test-results
+            test-results/**/*.png
+            test-results/**/error-context.md
+          retention-days: 7
           if-no-files-found: ignore
 
       - name: Complete commit status (Hub visual)
