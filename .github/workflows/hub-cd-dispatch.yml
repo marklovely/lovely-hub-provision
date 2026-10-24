@@ -72,8 +72,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TZ: Europe/London
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     strategy:
       fail-fast: false
       # Six terraform-managed hubs today; raise toward 10 if the fleet grows (GitHub default org concurrency is often 20).
@@ -103,5 +101,9 @@ jobs:
           npm ci
           npm ci --prefix worker
 
+      # Cloudflare credentials only on the step that deploys, never while packages install (#1165).
       - name: Deploy to hub
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: bash scripts/deploy-hub-pages-from-artifact.sh "${{ matrix.site_id }}"
