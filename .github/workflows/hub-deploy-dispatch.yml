@@ -1,0 +1,306 @@
+name: Hub deploy dispatch
+run-name: Deploy ${{ inputs.parts }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      checkout_sha:
+        description: Commit on private home-dashboard to deploy
+        required: true
+        type: string
+      parts:
+        description: Comma list of hub_jobs, hub_workers, hub_pages, marketing
+        required: true
+        type: string
+      wait_for_ci:
+        description: Wait for test and Hub smoke (demo) to pass on the commit first
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+# One deploy at a time, as on the VPS. A run that is still waiting when a newer one arrives is
+# replaced by it (#1190).
+concurrency:
+  group: hub-deploy
+  cancel-in-progress: false
+
+env:
+  # Keeps wrangler quiet even if a step calls it outside run-quiet-deploy.mjs.
+  WRANGLER_LOG: warn
+
+jobs:
+  resolve:
+    name: Resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      any: ${{ steps.resolve.outputs.any }}
+      parts: ${{ steps.resolve.outputs.parts }}
+      hub_jobs: ${{ steps.resolve.outputs.hub_jobs }}
+      hub_workers: ${{ steps.resolve.outputs.hub_workers }}
+      hub_pages: ${{ steps.resolve.outputs.hub_pages }}
+      marketing: ${{ steps.resolve.outputs.marketing }}
+      worker_sites: ${{ steps.resolve.outputs.worker_sites }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node
+        with:
+          package-manager-cache: 'false'
+
+      - id: resolve
+        env:
+          PARTS: ${{ inputs.parts }}
+        run: node scripts/resolve-public-deploy.mjs
+
+      # A status that can't be posted never holds up a deploy.
+      - name: Mark each part pending on the commit
+        if: steps.resolve.outputs.any == 'true'
+        continue-on-error: true
+        env:
+          PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
+          PARTS: ${{ steps.resolve.outputs.parts }}
+          SHA: ${{ inputs.checkout_sha }}
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node scripts/post-deploy-statuses.mjs pending
+
+  wait-for-ci:
+    name: Wait for CI
+    needs: resolve
+    if: needs.resolve.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: CI isn't expected
+        if: ${{ !inputs.wait_for_ci }}
+        run: echo "This commit only changed paths CI ignores, so there is nothing to wait for."
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: inputs.wait_for_ci
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node
+        if: inputs.wait_for_ci
+        with:
+          package-manager-cache: 'false'
+
+      - name: Wait for test + Hub smoke on this commit
+        if: inputs.wait_for_ci
+        env:
+          STATUS_REPOSITORY: ${{ secrets.HOME_DASHBOARD_REPO }}
+          STATUS_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          SHA: ${{ inputs.checkout_sha }}
+        run: node scripts/wait-for-commit-ci.mjs
+
+  hub-jobs:
+    name: hub-jobs Worker
+    needs: [resolve, wait-for-ci]
+    if: needs.resolve.outputs.hub_jobs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: worker/package-lock.json
+
+      # wrangler uploads the full log to private R2 if the update fails.
+      - name: Install worker dependencies
+        run: npm ci --prefix worker
+
+      # Cloudflare credentials only on the step that deploys, never while packages install (#1165).
+      - name: Update hub-jobs code (prod + sandbox)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_LOGS_R2_BUCKET: ${{ secrets.E2E_REPORTS_R2_BUCKET }}
+        run: node scripts/run-quiet-deploy.mjs --label "hub-jobs Worker" --name hub-jobs -- node scripts/deploy-hub-jobs-worker-code.mjs
+
+  hub-workers:
+    name: Hub API Worker (${{ matrix.site_id }})
+    needs: [resolve, wait-for-ci]
+    if: needs.resolve.outputs.hub_workers == 'true' && needs.resolve.outputs.worker_sites != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        site_id: ${{ fromJson(needs.resolve.outputs.worker_sites) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install worker dependencies
+        run: npm ci --prefix worker
+
+      # Each hub migrates before its Worker deploys, so a Worker never runs ahead of its database.
+      - name: D1 migrations, then the Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_LOGS_R2_BUCKET: ${{ secrets.E2E_REPORTS_R2_BUCKET }}
+          SITE_ID: ${{ matrix.site_id }}
+        run: node scripts/deploy-hub-worker.mjs "$SITE_ID"
+
+  hub-pages:
+    name: Hub Pages
+    needs: [resolve, wait-for-ci, hub-workers]
+    # After the Workers when both changed, so new pages never call an old API.
+    if: always() && needs.resolve.outputs.hub_pages == 'true' && needs.wait-for-ci.result == 'success' && needs.hub-workers.result != 'failure' && needs.hub-workers.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node
+        with:
+          package-manager-cache: 'false'
+
+      # Hub CD dispatch in this repo builds once and deploys every home in parallel.
+      - name: Run Hub CD for every home and wait
+        env:
+          CHECKOUT_SHA: ${{ inputs.checkout_sha }}
+          SITES: all
+          PUBLIC_CI_DISPATCH_TOKEN: ${{ github.token }}
+          PUBLIC_CI_REPO: ${{ github.repository }}
+          PUBLIC_CD_WAIT_TIMEOUT_MINUTES: '50'
+        run: node scripts/dispatch-public-hub-cd.mjs
+
+  marketing:
+    name: Marketing site
+    needs: [resolve, wait-for-ci]
+    if: needs.resolve.outputs.marketing == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node
+        with:
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix worker
+
+      - name: Deploy website/ to lovely-home and check it went live
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_LOGS_R2_BUCKET: ${{ secrets.E2E_REPORTS_R2_BUCKET }}
+          PAGES_COMMIT_HASH: ${{ inputs.checkout_sha }}
+        run: node scripts/run-quiet-deploy.mjs --label "Marketing site" --name marketing -- bash scripts/deploy-lovely-home-website.sh
+
+  summary:
+    name: Summary
+    needs: [resolve, wait-for-ci, hub-jobs, hub-workers, hub-pages, marketing]
+    # Also when Resolve failed, so an expired checkout token still reaches Slack.
+    if: always() && needs.resolve.outputs.any != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        continue-on-error: true
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ inputs.checkout_sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-node
+        if: steps.checkout.outcome == 'success'
+        with:
+          package-manager-cache: 'false'
+
+      - name: Final commit statuses
+        if: steps.checkout.outcome == 'success' && needs.resolve.outputs.any == 'true'
+        continue-on-error: true
+        env:
+          PRIVATE_REPO_GITHUB_TOKEN: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          HOME_DASHBOARD_REPO: ${{ secrets.HOME_DASHBOARD_REPO }}
+          PARTS: ${{ needs.resolve.outputs.parts }}
+          SHA: ${{ inputs.checkout_sha }}
+          DETAILS_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          WAIT_RESULT: ${{ needs.wait-for-ci.result }}
+          LOG_PREFIX: deploy-logs/${{ github.run_id }}-${{ github.run_attempt }}/
+          RESULTS: >-
+            {"hub_jobs":"${{ needs.hub-jobs.result }}",
+             "hub_workers":"${{ needs.hub-workers.result }}",
+             "hub_pages":"${{ needs.hub-pages.result }}",
+             "marketing":"${{ needs.marketing.result }}"}
+        run: node scripts/post-deploy-statuses.mjs final
+
+      - name: Post to Slack #workflows
+        if: steps.checkout.outcome == 'success'
+        env:
+          SLACK_WORKFLOWS_WEBHOOK_URL: ${{ secrets.SLACK_WORKFLOWS_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ inputs.checkout_sha }}
+          # Resolve is listed only when it failed.
+          RESULTS: >-
+            {"Resolve":"${{ needs.resolve.result == 'success' && 'skipped' || needs.resolve.result }}",
+             "Wait for CI":"${{ needs.wait-for-ci.result }}",
+             "hub-jobs Worker":"${{ needs.hub-jobs.result }}",
+             "Hub API Workers":"${{ needs.hub-workers.result }}",
+             "Hub Pages":"${{ needs.hub-pages.result }}",
+             "Marketing site":"${{ needs.marketing.result }}"}
+        run: node scripts/post-deploy-on-merge-summary.mjs
+
+      - name: Tell Slack the run couldn't check out home-dashboard
+        if: steps.checkout.outcome != 'success'
+        env:
+          SLACK_WORKFLOWS_WEBHOOK_URL: ${{ secrets.SLACK_WORKFLOWS_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "::error::Could not check out home-dashboard. Check HOME_DASHBOARD_DISPATCH_TOKEN on this repo."
+          if [ -n "$SLACK_WORKFLOWS_WEBHOOK_URL" ]; then
+            curl -fsS -X POST -H 'Content-Type: application/json' \
+              --data "{\"text\":\"❌ Hub deploy dispatch couldn't check out home-dashboard (expired HOME_DASHBOARD_DISPATCH_TOKEN?). <${RUN_URL}|Run>\"}" \
+              "$SLACK_WORKFLOWS_WEBHOOK_URL" > /dev/null
+          fi
+          exit 1
