@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # list the failed jobs of the run (#1314)
 
 jobs:
   notify:
@@ -31,5 +32,6 @@ jobs:
       - name: Post run to Slack
         env:
           SLACK_WORKFLOWS_WEBHOOK_URL: ${{ secrets.SLACK_WORKFLOWS_WEBHOOK_URL }}
+          GITHUB_TOKEN: ${{ github.token }}
           REGRESSION_WORKFLOWS: Hub lifecycle dispatch
         run: node scripts/notify-workflow-run-slack.mjs
