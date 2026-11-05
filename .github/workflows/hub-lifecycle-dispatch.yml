@@ -115,6 +115,54 @@ jobs:
       - id: sha
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+  # The deployed marketing site on sandbox (#1444): every page, Pricing from platform-sandbox,
+  # forms ready to send, Lottie's AI answer. No hub, no emails, a few minutes. Runs beside the
+  # lifecycle so a site break is reported even when hub provisioning fails.
+  marketing-site:
+    name: Marketing site (sandbox)
+    needs: [resolve-plans, deploy-sandbox]
+    if: >-
+      always() && needs.resolve-plans.result == 'success' &&
+      (needs.deploy-sandbox.result == 'success' || needs.deploy-sandbox.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: Europe/London
+      MARKETING_ORIGIN: ${{ inputs.marketing_origin || 'https://marketing-sandbox.lovely-home.co.uk' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ secrets.HOME_DASHBOARD_REPO }}
+          token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
+          ref: ${{ needs.resolve-plans.outputs.checkout_ref }}
+
+      - uses: ./.github/actions/setup-node
+
+      - run: npm ci
+
+      - run: npx playwright install chromium --with-deps
+
+      - run: npm run test:marketing-sandbox
+
+      - name: Upload Playwright report to R2
+        id: e2e_report_r2
+        if: always()
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          E2E_REPORTS_R2_BUCKET: ${{ secrets.E2E_REPORTS_R2_BUCKET }}
+          E2E_REPORTS_PUBLIC_BASE_URL: ${{ secrets.E2E_REPORTS_PUBLIC_BASE_URL }}
+          SIGNUP_PLAN: marketing-site
+        run: node scripts/upload-e2e-playwright-report-r2.mjs
+
+      - name: Playwright job summary
+        if: always()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SIGNUP_PLAN: marketing-site
+          artifact_url: ${{ steps.e2e_report_r2.outputs.artifact_url }}
+        run: node scripts/write-playwright-run-summary.mjs
+
   lifecycle:
     name: Lifecycle (${{ matrix.signup_plan }})
     needs: [resolve-plans, deploy-sandbox]
