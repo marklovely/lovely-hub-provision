@@ -6,14 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       signup_plan:
-        description: free, plus, or both (serial when both)
+        description: free, plus, both (serial), multi (two homes on Multi Home), or all — Sunday nights run all (#1444)
         required: false
         default: both
         type: choice
         options:
           - both
+          - all
           - free
           - plus
+          - multi
       checkout_ref:
         description: home-dashboard ref to test (branch, tag, or SHA)
         required: false
@@ -68,8 +70,9 @@ jobs:
           fi
           PLAN="$(printf '%s' "${INPUT_SIGNUP_PLAN}" | tr '[:upper:]' '[:lower:]')"
           case "$PLAN" in
-            free|plus) echo "json=[\"$PLAN\"]" >> "$GITHUB_OUTPUT" ;;
+            free|plus|multi) echo "json=[\"$PLAN\"]" >> "$GITHUB_OUTPUT" ;;
             both|"") echo 'json=["free","plus"]' >> "$GITHUB_OUTPUT" ;;
+            all) echo 'json=["free","plus","multi"]' >> "$GITHUB_OUTPUT" ;;
             *)
               echo "::error::Invalid signup_plan: $PLAN"
               exit 1
