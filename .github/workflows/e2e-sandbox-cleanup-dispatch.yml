@@ -54,6 +54,8 @@ jobs:
           repository: ${{ secrets.HOME_DASHBOARD_REPO }}
           token: ${{ secrets.HOME_DASHBOARD_DISPATCH_TOKEN }}
           ref: ${{ needs.resolve-ref.outputs.checkout_ref }}
+          # Full history: the Stripe audit dates each registered e2e-* hub from its record commit.
+          fetch-depth: 0
 
       - uses: ./.github/actions/setup-node
 
@@ -96,6 +98,13 @@ jobs:
           else
             node scripts/list-e2e-orphan-hubs.mjs "${ARGS[@]}" "${INPUT_SITE_IDS}"
           fi
+
+      # What is left in Stripe, and what the nightly E2E Stripe sweep would cancel (#1466). Lists only.
+      - name: Stripe audit
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          E2E_OWNER_EMAIL: ${{ secrets.E2E_OWNER_EMAIL }}
+        run: node scripts/sweep-e2e-stripe-subscriptions.mjs
 
   billing-deprovision:
     needs: [resolve-ref, resolve-orphans]
@@ -166,6 +175,21 @@ jobs:
           prune_public_repo_secrets: 'true'
           skip_platform_admin: 'true'
           skip_platform_hub_archive: 'true'
+
+      # The hub is gone: record that on its billing row, then cancel its Stripe subscription (#1466).
+      # The cancel webhook sees a cancelled row whose teardown is already dispatched and does not
+      # enqueue another; the purge in the next job deletes the row.
+      - name: Mark the hub torn down in sandbox billing D1
+        env:
+          SITE_ID: ${{ matrix.site_id }}
+        run: node scripts/mark-e2e-hub-torn-down.mjs "$SITE_ID"
+
+      - name: Cancel the hub's Stripe subscription
+        env:
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          E2E_OWNER_EMAIL: ${{ secrets.E2E_OWNER_EMAIL }}
+          SITE_ID: ${{ matrix.site_id }}
+        run: node scripts/sweep-e2e-stripe-subscriptions.mjs --site-ids "$SITE_ID" --apply
 
   redeploy-sandbox-platform-admin:
     needs: [resolve-orphans, billing-deprovision]
